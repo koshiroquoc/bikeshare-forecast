@@ -1,0 +1,19 @@
+system:
+  name: divvy
+  trip_bucket_url: "https://divvy-tripdata.s3.amazonaws.com"
+
+data:
+  start_month: "2023-07"
+  end_month: "2026-06"
+  raw_dir: "data/raw"
+
+weather:
+  latitude: 41.8781
+  longitude: -87.6298
+  timezone: "America/Chicago"
+  hourly_vars: [temperature_2m, precipitation, snowfall, wind_speed_10m, relative_humidity_2m]
+
+scope:
+  top_n_stations: null
+  min_trip_seconds: 60
+  max_trip_hours: 24

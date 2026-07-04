@@ -1,0 +1,22 @@
+[project]
+name = "bikeshare-forecast"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "holidays>=0.99",
+    "polars>=1.42.1",
+    "pyarrow>=24.0.0",
+    "pydantic>=2.13.4",
+    "pyyaml>=6.0.3",
+    "requests>=2.34.2",
+]
+
+[dependency-groups]
+dev = [
+    "jupyter>=1.1.1",
+    "matplotlib>=3.11.0",
+    "pytest>=9.1.1",
+    "ruff>=0.15.20",
+]
