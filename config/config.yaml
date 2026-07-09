@@ -24,3 +24,15 @@ scope:
   top_n_stations: 200
   min_trip_seconds: 60
   max_trip_hours: 24
+
+features:
+  lag_hours:
+    - 24
+    - 48
+    - 168
+  rolling_days:
+    - 7
+    - 28
+
+backtest:
+  n_windows: 4
