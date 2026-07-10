@@ -3,14 +3,14 @@ name = "bikeshare-forecast"
 version = "0.1.0"
 description = "Add your description here"
 readme = "README.md"
-requires-python = ">=3.11"
+requires-python = ">=3.11,<3.13"
 dependencies = [
     "holidays>=0.99",
     "lightgbm>=4.6.0",
-    "mlflow>=1.27.0",
-    "pandas>=3.0.3",
+    "mlflow>=3.0",
+    "pandas>=2.2,<3",
     "polars>=1.42.1",
-    "pyarrow>=24.0.0",
+    "pyarrow>=17,<24",
     "pydantic>=2.13.4",
     "pyyaml>=6.0.3",
     "requests>=2.34.2",

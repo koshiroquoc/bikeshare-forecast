@@ -138,7 +138,7 @@ def summarize(results: pl.DataFrame) -> pl.DataFrame:
         pl.col("mae").alias("naive_mae"),
     )
 
-    with_mase = results.join(naive, on="window").with_columns(
+    with_mase = results.join(naive, on="window", how="left").with_columns(
         (pl.col("mae") / pl.col("naive_mae")).alias("mase")
     )
 
