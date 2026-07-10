@@ -14,6 +14,12 @@ week 1:
 week 2:
 - **Full station-hour grid with zero filling.** The modeling table includes every selected station for every hour in the observed time range, and missing station-hours are filled with `trips = 0`. This prevents the model from learning only from hours with observed trips and is protected by the full-grid unit test.
 
+## Week 3 Day 1 — Default LightGBM result
+
+The default LightGBM Poisson model outperforms both Week 2 baselines on the same 4 rolling-origin evaluation windows. It achieves a mean MAE of 1.101 and a MASE of 0.755, compared with 1.198 MAE and 0.820 MASE for the historical mean baseline, and 1.460 MAE and 1.000 MASE for the seasonal naive baseline.
+
+This corresponds to a 24.6% MAE reduction relative to seasonal naive and an 8.1% MAE reduction relative to historical mean. The result is plausible: the model improves over both baselines, but not by an unrealistically large margin, so there is no immediate evidence of leakage.
+
 - **Station lifetime trimming.** Station-hour rows before a station's first observed month are removed. This avoids teaching the model that a station had zero demand before it existed.
 
 - **All target-derived features use at least a 24-hour lag.** Because the forecast horizon is 24 hours, lag features must not use information from the previous 1–23 hours. The leakage guard test corrupts the interval after `H-24` and verifies that features at `H` do not change.
