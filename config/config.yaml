@@ -36,3 +36,33 @@ features:
 
 backtest:
   n_windows: 4
+
+model:
+  objective: poisson
+  features:
+    - hour_of_day
+    - day_of_week
+    - month
+    - is_weekend
+    - is_holiday
+    - hour_sin
+    - hour_cos
+    - month_sin
+    - month_cos
+    - temperature_2m
+    - precipitation
+    - snowfall
+    - wind_speed_10m
+    - relative_humidity_2m
+    - lat
+    - lng
+    - station_id
+    - lag_24
+    - lag_48
+    - lag_168
+    - roll_mean_7d
+    - roll_mean_28d
+  params:
+    n_estimators: 2000
+    learning_rate: 0.05
+    num_leaves: 63

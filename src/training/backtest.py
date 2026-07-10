@@ -107,11 +107,13 @@ def run_backtest(
     - eval = rows inside that month
     """
     rows = []
-    df = features_df.with_columns(pl.col("hour").dt.strftime("%Y-%m").alias("month"))
+    df = features_df.with_columns(
+        pl.col("hour").dt.strftime("%Y-%m").alias("_eval_month")
+    )
 
     for month in eval_months(features_df, n_windows):
-        train_df = df.filter(pl.col("month") < month)
-        eval_df = df.filter(pl.col("month") == month)
+        train_df = df.filter(pl.col("_eval_month") < month)
+        eval_df = df.filter(pl.col("_eval_month") == month)
 
         for predictor in predictors:
             yhat = predictor.predict(train_df, eval_df)
