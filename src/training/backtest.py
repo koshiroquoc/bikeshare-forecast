@@ -152,3 +152,29 @@ def summarize(results: pl.DataFrame) -> pl.DataFrame:
         )
         .sort("mae_mean")
     )
+
+
+def prediction_table(
+    features_df: pl.DataFrame,
+    predictors: list,
+    window_month: str,
+) -> pl.DataFrame:
+    """Build detailed prediction table for one evaluation month.
+
+    Returns one row per station-hour with actual trips and one prediction column
+    per predictor. This table is the source for error analysis slices.
+    """
+    df = features_df.with_columns(
+        pl.col("hour").dt.strftime("%Y-%m").alias("_eval_month")
+    )
+
+    train_df = df.filter(pl.col("_eval_month") < window_month)
+    eval_df = df.filter(pl.col("_eval_month") == window_month)
+
+    out = eval_df.select("station_id", "hour", "trips")
+
+    for predictor in predictors:
+        predictions = predictor.predict(train_df, eval_df)
+        out = out.with_columns(predictions.alias(f"pred_{predictor.name}"))
+
+    return out

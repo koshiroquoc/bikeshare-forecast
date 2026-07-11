@@ -3,14 +3,6 @@
 import polars as pl
 import yaml
 
-from pathlib import Path
-import sys
-
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
-
-if str(PROJECT_ROOT) not in sys.path:
-    sys.path.insert(0, str(PROJECT_ROOT))
-
 from src.training import backtest
 from src.training.models import LGBMPredictor
 from src.training.run_experiment import run_experiment
