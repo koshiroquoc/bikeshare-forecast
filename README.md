@@ -1,88 +1,95 @@
 # Divvy Demand Forecasting
 
-Dự báo số lượt mượn xe theo trạm-giờ cho 24h tới, phục vụ bài toán rebalancing của hệ thống bike-share Divvy (Chicago).
+End-to-end ML system that forecasts station-hour bike demand 24 hours ahead for Chicago's Divvy bike-share network, supporting the rebalancing problem (deciding where to move bikes before demand hits).
+
+## Headline results
+
+Final LightGBM (Poisson) model vs. baselines, evaluated on 4 rolling-origin monthly windows (Mar–Jun 2026):
+
+| Predictor | MAE mean ± std | RMSE mean | MASE | MLflow run |
+|---|---:|---:|---:|---|
+| **LGBM final** | **1.101 ± 0.283** | **1.832** | **0.755** | `2d509406102a484db1cc05c21e243903` |
+| Historical mean | 1.198 ± 0.316 | 2.267 | 0.820 | `2d509406102a484db1cc05c21e243903` |
+| Seasonal naive | 1.460 ± 0.385 | 2.673 | 1.000 | `2d509406102a484db1cc05c21e243903` |
+
+- **24.6% MAE reduction** vs. seasonal naive, **8.1%** vs. historical mean.
+- The margin is plausible rather than suspiciously large — no evidence of leakage, which is additionally protected by an explicit leakage guard test.
+
+## Tech stack
+
+| Layer | Tool |
+|---|---|
+| Data processing | Polars |
+| Modeling | LightGBM (Poisson objective) |
+| Experiment tracking | MLflow 3.x (SQLite backend) |
+| Testing | pytest (full-grid, leakage guard, train/serve consistency) |
+| Package management | uv |
+| Planned (Weeks 4–5) | FastAPI serving (batch precompute), Prefect 3 orchestration, Evidently drift detection, Docker, GitHub Actions |
+
+## Problem setup
+
+- **Target:** trips starting from each station in each hour, forecast horizon 24 hours.
+- **Scope:** top 200 stations (`top_n_stations = 200` in `config.yaml`), covering 65% of last-12-month volume.
+- **Evaluation:** rolling-origin backtest over the last 4 full calendar months. For each window, training uses all station-hour rows before the evaluation month; evaluation uses only rows inside that month. All models — baselines, feature variants, tuning candidates — are compared on the same windows.
 
 ## Design decisions
 
-week 1:
-1. Cleaning rules 60s / 24h / missing station — with the 19,74% removed per rule (section 3–4).
-2. Station mapping: 1,659 IDs remapped, ambiguous pairs deliberately left unmapped (section 5).
-3. Scope: `top_n_stations = 200` covering 65% of last-12-month volume (section 8) — update `config.yaml` now.
-4. Zero-inflation: 52% of station-hours are zero in scope — the evidence for the Poisson objective in week 3.
-5. Timezone sanity + weather join ≥95% both asserted in-code (sections 6–7).
+Grouped by theme rather than chronology. Each decision is enforced in code (tests or assertions) where possible.
 
-week 2:
-- **Full station-hour grid with zero filling.** The modeling table includes every selected station for every hour in the observed time range, and missing station-hours are filled with `trips = 0`. This prevents the model from learning only from hours with observed trips and is protected by the full-grid unit test.
-
-## Week 3 Day 1 — Default LightGBM result
-
-The default LightGBM Poisson model outperforms both Week 2 baselines on the same 4 rolling-origin evaluation windows. It achieves a mean MAE of 1.101 and a MASE of 0.755, compared with 1.198 MAE and 0.820 MASE for the historical mean baseline, and 1.460 MAE and 1.000 MASE for the seasonal naive baseline.
-
-This corresponds to a 24.6% MAE reduction relative to seasonal naive and an 8.1% MAE reduction relative to historical mean. The result is plausible: the model improves over both baselines, but not by an unrealistically large margin, so there is no immediate evidence of leakage.
-
-- **Station lifetime trimming.** Station-hour rows before a station's first observed month are removed. This avoids teaching the model that a station had zero demand before it existed.
+### Leakage discipline
 
 - **All target-derived features use at least a 24-hour lag.** Because the forecast horizon is 24 hours, lag features must not use information from the previous 1–23 hours. The leakage guard test corrupts the interval after `H-24` and verifies that features at `H` do not change.
+- **Same-hour rolling means instead of ordinary rolling windows.** `roll_mean_7d` uses the same hour from previous days (`t-24h`, `t-48h`, …). A normal rolling window over the previous 168 hours would leak recent target values that are not available for a 24-hour-ahead forecast.
+- **Early stopping uses a time-based split.** The last month of each training window is used for validation. Random validation would leak nearby future observations into training and produce overly optimistic results.
+- **Weather actuals for training, forecast weather for serving.** Historical training uses observed weather; future serving will use forecast weather with the same schema. This is an intentional, monitored source of train/serve difference.
 
-- **Same-hour rolling means instead of ordinary rolling windows.** `roll_mean_7d` uses the same hour from previous days, such as `t-24h`, `t-48h`, and so on. A normal rolling window over the previous 168 hours would leak recent target values that are not available for a 24-hour-ahead forecast.
+### Data construction
 
-- **One feature code path for training and serving.** Calendar, weather, station, and lag features are implemented in reusable processing functions rather than notebook-only logic. This reduces train/serve skew because future batch predictions can call the same feature code used for training.
+- **Cleaning rules: 60s / 24h / missing station**, removing 19.74% of raw trips (details in the Week 1 notebook, sections 3–4).
+- **Station mapping:** 1,659 IDs remapped to canonical stations; ambiguous pairs deliberately left unmapped.
+- **Full station-hour grid with zero filling.** The modeling table includes every selected station for every hour in the observed range; missing station-hours are filled with `trips = 0`. This prevents the model from learning only from hours with observed trips and is protected by the full-grid unit test.
+- **Station lifetime trimming.** Rows before a station's first observed month are removed, so the model never learns that a station had zero demand before it existed.
+- **Zero-inflation evidence:** 52% of in-scope station-hours are zero — the justification for the Poisson objective.
+- **Timezone sanity and weather-join coverage (≥95%) asserted in code.**
+- **DST is ignored in the first iteration.** The grid uses naive local hourly timestamps, which affects only a tiny fraction of annual hours around DST transitions and is acceptable for v1.
 
-- **Weather actuals for training and forecast weather for serving.** Historical training uses observed weather, while future serving will use forecast weather with the same schema. This is an intentional source of train/serve difference and should be monitored later.
+### Modeling and evaluation
 
-- **DST is ignored in the first version.** The station-hour grid uses naive local hourly timestamps, which can create a small number of imperfect hours around daylight saving time transitions. This affects only a tiny fraction of annual hours and is acceptable for the first modeling iteration.
+- **Poisson objective.** The target is a non-negative, zero-inflated count; Poisson matches count forecasting better than squared-error regression and naturally produces non-negative predictions.
+- **`station_id` as a native categorical feature.** LightGBM learns station-level effects without one-hot encoding hundreds of stations; unknown stations at prediction time become missing categorical values rather than crashing the model.
+- **Model-agnostic backtest.** A predictor only needs a `name` and a `predict(train_df, eval_df)` method, so baselines and LightGBM variants share the same rolling-origin evaluation framework.
+- **Feature decisions use ΔMAE with 1-std noise awareness.** Improvements smaller than window-to-window MAE variation are treated as noise — this is why the cluster feature and the best fast-sweep candidate were not kept.
+- **One feature code path for training and serving.** Calendar, weather, station, and lag features live in reusable processing functions rather than notebook-only logic, reducing train/serve skew for future batch predictions.
 
-- **Backtest is model-agnostic.** A predictor only needs a `name` and a `predict(train_df, eval_df)` method. This allows seasonal naive, historical mean, and future LightGBM models to use the same rolling-origin evaluation framework.
+## Experiments
 
-## Baseline results
-
-Rolling-origin backtest uses the last 4 full calendar months as evaluation windows: March 2026 through June 2026. For each window, the training set contains all station-hour rows before the evaluation month, and the evaluation set contains only rows inside that month.
+### Baselines
 
 | Baseline | MAE mean ± std | RMSE mean | MASE |
 |---|---:|---:|---:|
 | Historical mean | 1.198 ± 0.316 | 2.267 | 0.820 |
 | Seasonal naive | 1.460 ± 0.385 | 2.673 | 1.000 |
 
-**Conclusion:** The historical mean baseline performs better than the seasonal naive baseline, with lower MAE, lower RMSE, and a MASE of 0.820. This means the historical mean reduces error by about 18% relative to the weekly seasonal naive benchmark. The MAE values are within the expected range for top-200 station-hour demand forecasting, so the baseline results look reasonable and do not suggest obvious leakage or grid construction errors.
+The historical mean beats the weekly seasonal naive by about 18% MAE. Values are within the expected range for top-200 station-hour demand, with no signs of leakage or grid construction errors.
 
-## Week 2 design decisions
+### Feature iteration
 
-- **Full station-hour grid with zero filling.** The modeling table includes every selected station for every hour in the observed time range, and missing station-hours are filled with `trips = 0`. This prevents the model from learning only from hours with observed trips and is protected by the full-grid unit test.
-
-- **Station lifetime trimming.** Station-hour rows before a station's first observed month are removed. This avoids teaching the model that a station had zero demand before it existed.
-
-- **All target-derived features use at least a 24-hour lag.** Because the forecast horizon is 24 hours, lag features must not use information from the previous 1 to 23 hours. The leakage guard test corrupts the interval after `H-24` and verifies that features at `H` do not change.
-
-- **Same-hour rolling means instead of ordinary rolling windows.** `roll_mean_7d` uses the same hour from previous days, such as `t-24h`, `t-48h`, and so on. A normal rolling window over the previous 168 hours would leak recent target values that are not available for a 24-hour-ahead forecast.
-
-- **One feature code path for training and serving.** Calendar, weather, station, and lag features are implemented in reusable processing functions rather than notebook-only logic. This reduces train/serve skew because future batch predictions can call the same feature code used for training.
-
-- **Weather actuals for training and forecast weather for serving.** Historical training uses observed weather, while future serving will use forecast weather with the same schema. This is an intentional source of train/serve difference and should be monitored later.
-
-- **DST is ignored in the first version.** The station-hour grid uses naive local hourly timestamps, which can create a small number of imperfect hours around daylight saving time transitions. This affects only a tiny fraction of annual hours and is acceptable for the first modeling iteration.
-
-- **Backtest is model-agnostic.** A predictor only needs a `name` and a `predict(train_df, eval_df)` method. This allows seasonal naive, historical mean, and future LightGBM models to use the same rolling-origin evaluation framework.
-
-## Week 3 feature iteration
-
-All feature-iteration experiments use the same 4 rolling-origin evaluation windows and are tracked in MLflow.
+All experiments use the same 4 evaluation windows and are tracked in MLflow.
 
 | Variant | MAE mean ± std | RMSE mean | MASE | Decision | MLflow run |
 |---|---:|---:|---:|---|---|
-| LGBM default | 1.101 ± 0.283 | 1.832 | 0.755 | Baseline model | `<0fbe26b0b1d04fddb75910dbf67652dd>` |
+| LGBM default | 1.101 ± 0.283 | 1.832 | 0.755 | Baseline model | `0fbe26b0b1d04fddb75910dbf67652dd` |
 | LGBM + station cluster | 1.101 ± 0.280 | 1.832 | 0.755 | Kill | `c757321b2c9a4be3a92bcff63f61f369` |
 | LGBM + event flag | 1.103 ± 0.284 | 1.837 | 0.756 | Infrastructure only | `a69d728c7a2f416195bd998af338f395` |
 | LGBM no weather | 1.154 ± 0.278 | 1.963 | 0.794 | Diagnostic only | `31a8c4494258492cbadee574e238be9f` |
 
-**Cluster decision:** The station demand-shape cluster feature does not improve the default LightGBM model. Its MAE is effectively unchanged at 1.101, with the same RMSE and MASE as the default model. This suggests that LightGBM's native categorical `station_id` feature already captures most station-level structure. The cluster feature is therefore not included in the default model.
+- **Cluster — rejected.** MAE effectively unchanged at 1.101; LightGBM's native categorical `station_id` already captures most station-level structure.
+- **Event flag — infrastructure only.** Technically valid with nonzero coverage in the eval windows, but coverage is sparse (3.2% of station-hours in 2026-03, 0.0% in 2026-04, 6.5% in 2026-05, 3.3% in 2026-06) and MAE is slightly worse (1.103 vs. 1.101). The event pipeline (`chicago_events.csv`, `src/training/events.py`, tests) is kept for future analysis but `is_major_event` is not in the default model.
+- **Weather — retained.** Removing weather increases MAE from 1.101 to 1.154 (+4.8%) and RMSE from 1.832 to 1.963, consistent with the error-analysis finding that weather features are especially useful during rainy hours.
 
-**Event decision:** The event feature is technically valid and has nonzero coverage in the evaluation windows, but it does not improve the overall backtest result. Event coverage is sparse: 3.2% of station-hours in 2026-03, 0.0% in 2026-04, 6.5% in 2026-05, and 3.3% in 2026-06. The event model has slightly worse MAE than the default model, 1.103 versus 1.101. The event infrastructure is kept for future analysis, but `is_major_event` is not included in the default model.
+### Hyperparameter tuning
 
-**Weather decision:** Weather features are important and should remain in the default model. Removing weather features increases MAE from 1.101 to 1.154 and RMSE from 1.832 to 1.963. This is a 0.053 MAE increase, or about a 4.8% degradation relative to the default LightGBM model. This supports the error-analysis finding that weather features are especially useful during rainy hours and still add value on the full rolling-origin backtest.
-
-## Week 3 tuning and final model
-
-A small LightGBM tuning sweep was run through the same 4 rolling-origin evaluation windows and tracked in MLflow. The search intentionally varied only a few high-impact hyperparameters: learning rate, tree complexity, and leaf regularization. The sweep used `n_estimators=500` for faster iteration; the final model is rerun with the default `n_estimators=2000` cap and early stopping.
+A small sweep over high-impact hyperparameters (learning rate, tree complexity, leaf regularization) using `n_estimators=500` for fast iteration; the final model reruns with the default `n_estimators=2000` cap and early stopping.
 
 | Candidate | MAE mean ± std | RMSE mean | MASE | Decision |
 |---|---:|---:|---:|---|
@@ -96,57 +103,33 @@ A small LightGBM tuning sweep was run through the same 4 rolling-origin evaluati
 | lr_0_03 | 1.118 ± 0.285 | 1.866 | 0.767 | Not kept |
 | leaves_31 | 1.119 ± 0.286 | 1.870 | 0.767 | Not kept |
 
-**Selection rule:** The final configuration is the simplest configuration among the leading candidates that are not meaningfully separated by the standard deviation of MAE across backtest windows. This avoids overfitting the configuration to only four evaluation windows.
+**Selection rule:** the simplest configuration among candidates not meaningfully separated by the MAE standard deviation across backtest windows — this avoids overfitting the configuration to only four evaluation windows.
 
-**Final decision:** The default LightGBM configuration is retained. Although `num_leaves=127` is the best candidate in the fast sweep, its MAE is 1.102, which is not meaningfully better than the default model's 1.101 MAE from the full Day 1 run. Increasing tree complexity is therefore not justified. The final model keeps `learning_rate=0.05`, `num_leaves=63`, and `n_estimators=2000`.
+**Final decision:** the default configuration is retained (`learning_rate=0.05`, `num_leaves=63`, `n_estimators=2000` with early stopping). `num_leaves=127` reached 1.102 MAE, not meaningfully better than the default's 1.101, so extra tree complexity is not justified.
 
-### Final model result
+### Feature importance
 
-| Predictor | MAE mean ± std | RMSE mean | MASE | MLflow run |
-|---|---:|---:|---:|---|
-| LGBM final | 1.101 ± 0.283 | 1.832 | 0.755 | `2d509406102a484db1cc05c21e243903` |
-| Historical mean | 1.198 ± 0.316 | 2.267 | 0.820 | `2d509406102a484db1cc05c21e243903` |
-| Seasonal naive | 1.460 ± 0.385 | 2.673 | 1.000 | `2d509406102a484db1cc05c21e243903` |
+The final model is driven primarily by demand-history features. Top gain-based features: `roll_mean_28d`, `roll_mean_7d`, `station_id`, `lag_168`, `day_of_week`.
 
-### Week 3 model design decisions
+This matches the problem structure: bikeshare demand is highly persistent at the station-hour level, so rolling averages and weekly lags carry the strongest signal. The high importance of `station_id` supports the cluster-feature rejection — LightGBM already captures station-level structure directly from the categorical identifier.
 
-| Decision | Rationale |
-|---|---|
-| LightGBM uses a Poisson objective | The target is a non-negative station-hour trip count and the dataset is zero-inflated. A Poisson objective matches count forecasting better than squared-error regression and naturally produces non-negative predictions. |
-| Early stopping uses a time-based split | The last month of each training window is used for validation. Random validation would leak nearby future observations into training and produce overly optimistic results. |
-| `station_id` is handled as a native categorical feature | This lets LightGBM learn station-level effects without one-hot encoding hundreds of stations. Unknown stations at prediction time become missing categorical values rather than crashing the model. |
-| All variants use the same rolling-origin backtest | Baselines, default LightGBM, feature variants, and tuning candidates are compared on the same evaluation windows. This prevents misleading comparisons across different splits. |
-| Feature decisions are made using ΔMAE and 1-std noise awareness | Improvements smaller than the window-to-window MAE variation are treated as noise. This is why the cluster feature and the best fast tuning candidate are not kept. |
-| Weather features are retained | The no-weather variant increases MAE from 1.101 to 1.154 and RMSE from 1.832 to 1.963, showing that weather adds value beyond lag features. |
-| Cluster feature is rejected | The station-cluster variant has essentially the same MAE as the default model, suggesting that native `station_id` already captures most station-level structure. |
-| Event feature is kept as infrastructure only | Event coverage is sparse in the current backtest windows and the event variant slightly worsens MAE. The code remains available for future analysis, but the feature is not part of the default model. |
-| The final config favors simplicity over tuning noise | The best fast tuning candidate is not meaningfully better than the default full run, so the default configuration is retained rather than increasing complexity. |
- 
-### Final model feature importance
+Calendar features (`day_of_week`, `is_weekend`, `month_cos`) contribute meaningfully. Weather features (`wind_speed_10m`, `snowfall`) rank lower in gain but matter operationally: the no-weather ablation showed a 1.101 → 1.154 MAE degradation.
 
-The final LightGBM model is driven primarily by demand-history features rather than weather alone. The top gain-based features are `roll_mean_28d`, `roll_mean_7d`, `station_id`, `lag_168`, and `day_of_week`.
-
-This pattern is consistent with the problem structure. Bikeshare demand is highly persistent at the station-hour level, so recent rolling averages and weekly lag features provide the strongest signal. `station_id` also has high importance, which supports the Day 4 result that an additional station-cluster feature is redundant: LightGBM already captures most station-level structure directly from the categorical station identifier.
-
-Calendar features such as `day_of_week`, `is_weekend`, and `month_cos` also contribute meaningfully, reflecting weekly and seasonal demand cycles. Weather features such as `wind_speed_10m` and `snowfall` appear lower in the gain ranking, but they still matter operationally: the Day 4 no-weather experiment showed that removing weather features increases MAE from 1.101 to 1.154, confirming that weather improves the model even if demand-history features dominate overall gain.
-
-Overall, the feature-importance profile supports the interpretation that the model improves over seasonal naive not by ignoring history, but by learning when a weekly copy should be adjusted using station identity, smoother demand trends, calendar context, and weather.
+Overall, the model improves over seasonal naive not by ignoring history, but by learning when a weekly copy should be adjusted using station identity, smoother demand trends, calendar context, and weather.
 
 ## Data products
 
-The processed data products are generated by running:
+Generated by:
 
 ```bash
 make features
 ```
 
-These files are written to `data/processed/` and are not committed to Git because they are reproducible from raw data and project code.
+Files are written to `data/processed/` and are not committed to Git because they are reproducible from raw data and project code. These schemas are treated as a contract for downstream analysis and should not be renamed casually.
 
 ### `features.parquet`
 
-Station-hour modeling table for the selected top-200 station scope.
-
-Core columns:
+Station-hour modeling table for the top-200 station scope.
 
 | Column | Description |
 |---|---|
@@ -171,7 +154,7 @@ Core columns:
 
 ### `station_master.parquet`
 
-Station-level reference table for all cleaned stations, not only the top-200 modeling scope.
+Station-level reference table for all cleaned stations (not only the top-200 scope).
 
 | Column | Description |
 |---|---|
@@ -195,7 +178,10 @@ Station-month panel for downstream station analysis.
 | `casual_trips` | Casual trips in that station-month |
 | `total_trips` | Total trips in that station-month |
 
-These schemas are treated as a contract for downstream analysis and should not be renamed casually.
+## Roadmap
 
-
-**Conclusion:** The historical mean baseline performs better than the seasonal naive baseline, with lower MAE, lower RMSE, and a MASE of 0.820. This means the historical mean reduces error by about 18% relative to the weekly seasonal naive benchmark. The MAE values are within the expected range for top-200 station-hour demand forecasting, so the baseline results look reasonable and do not suggest obvious leakage or grid construction errors.
+- [x] Week 1 — Data cleaning, station mapping, scope selection, EDA
+- [x] Week 2 — Station-hour grid, leak-safe features, rolling-origin backtest, baselines
+- [x] Week 3 — LightGBM model, feature iteration, tuning, error analysis
+- [ ] Week 4 — Model serving: FastAPI with batch precompute (input space is enumerable: N stations × 24 hours), self-describing model artifacts (feature list, categorical mappings, git hash, val MAE)
+- [ ] Week 5 — Orchestration (Prefect 3), MLflow promotion gate reusing the backtest harness, drift detection (Evidently), Docker + GitHub Actions
