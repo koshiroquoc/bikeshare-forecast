@@ -104,9 +104,9 @@ A small LightGBM tuning sweep was run through the same 4 rolling-origin evaluati
 
 | Predictor | MAE mean ± std | RMSE mean | MASE | MLflow run |
 |---|---:|---:|---:|---|
-| LGBM final | X.XXX ± X.XXX | X.XXX | X.XXX | `<FINAL_RUN_ID>` |
-| Historical mean | 1.198 ± 0.316 | 2.267 | 0.820 | `<FINAL_RUN_ID>` |
-| Seasonal naive | 1.460 ± 0.385 | 2.673 | 1.000 | `<FINAL_RUN_ID>` |
+| LGBM final | 1.101 ± 0.283 | 1.832 | 0.755 | `2d509406102a484db1cc05c21e243903` |
+| Historical mean | 1.198 ± 0.316 | 2.267 | 0.820 | `2d509406102a484db1cc05c21e243903` |
+| Seasonal naive | 1.460 ± 0.385 | 2.673 | 1.000 | `2d509406102a484db1cc05c21e243903` |
 
 ## Data products
 
