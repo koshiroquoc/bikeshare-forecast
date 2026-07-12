@@ -1,4 +1,4 @@
-.PHONY: ingest test lint features backtest mlflow-day1 mlflow-day4
+.PHONY: ingest test lint features backtest mlflow-day1 mlflow-day4 mlflow-day5-tune
 
 ingest:
 	uv run python -m src.ingestion.divvy --config config/config.yaml
@@ -21,3 +21,6 @@ mlflow-day1:
 
 mlflow-day4:
 	MLFLOW_TRACKING_URI=sqlite:///$(CURDIR)/mlflow.db PYTHONPATH=. uv run python scripts/run_day4_variants.py
+
+mlflow-day5-tune:
+	MLFLOW_TRACKING_URI=sqlite:///$(CURDIR)/mlflow.db PYTHONPATH=. uv run python scripts/run_day5_tuning.py
