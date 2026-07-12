@@ -121,6 +121,16 @@ A small LightGBM tuning sweep was run through the same 4 rolling-origin evaluati
 | Cluster feature is rejected | The station-cluster variant has essentially the same MAE as the default model, suggesting that native `station_id` already captures most station-level structure. |
 | Event feature is kept as infrastructure only | Event coverage is sparse in the current backtest windows and the event variant slightly worsens MAE. The code remains available for future analysis, but the feature is not part of the default model. |
 | The final config favors simplicity over tuning noise | The best fast tuning candidate is not meaningfully better than the default full run, so the default configuration is retained rather than increasing complexity. |
+ 
+### Final model feature importance
+
+The final LightGBM model is driven primarily by demand-history features rather than weather alone. The top gain-based features are `roll_mean_28d`, `roll_mean_7d`, `station_id`, `lag_168`, and `day_of_week`.
+
+This pattern is consistent with the problem structure. Bikeshare demand is highly persistent at the station-hour level, so recent rolling averages and weekly lag features provide the strongest signal. `station_id` also has high importance, which supports the Day 4 result that an additional station-cluster feature is redundant: LightGBM already captures most station-level structure directly from the categorical station identifier.
+
+Calendar features such as `day_of_week`, `is_weekend`, and `month_cos` also contribute meaningfully, reflecting weekly and seasonal demand cycles. Weather features such as `wind_speed_10m` and `snowfall` appear lower in the gain ranking, but they still matter operationally: the Day 4 no-weather experiment showed that removing weather features increases MAE from 1.101 to 1.154, confirming that weather improves the model even if demand-history features dominate overall gain.
+
+Overall, the feature-importance profile supports the interpretation that the model improves over seasonal naive not by ignoring history, but by learning when a weekly copy should be adjusted using station identity, smoother demand trends, calendar context, and weather.
 
 ## Data products
 
