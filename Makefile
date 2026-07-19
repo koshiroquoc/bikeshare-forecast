@@ -1,4 +1,6 @@
-.PHONY: ingest test lint features backtest mlflow-day1 mlflow-day4 mlflow-day5-tune mlflow-day5-final
+.PHONY: ingest test lint features backtest mlflow-day1 mlflow-day4 mlflow-day5-tune mlflow-day5-final train-production forecast replay api
+
+export PREFECT_SERVER_EPHEMERAL_ENABLED=True
 
 ingest:
 	uv run python -m src.ingestion.divvy --config config/config.yaml
@@ -27,3 +29,15 @@ mlflow-day5-tune:
 
 mlflow-day5-final:
 	MLFLOW_TRACKING_URI=sqlite:///$(CURDIR)/mlflow.db PYTHONPATH=. uv run python scripts/run_day5_final.py
+
+train-production:
+	uv run python -m src.training.train_production $(if $(TRAIN_THROUGH),--train-through $(TRAIN_THROUGH),)
+
+forecast:
+	uv run python -m flows.nightly_forecast --as-of $(AS_OF) $(if $(MODEL_DIR),--model-dir $(MODEL_DIR),) $(if $(OUT_DIR),--out-dir $(OUT_DIR),)
+
+replay:
+	uv run python -m scripts.replay --start $(START) --days $(or $(DAYS),7) $(if $(MODEL_DIR),--model-dir $(MODEL_DIR),) $(if $(OUT_DIR),--out-dir $(OUT_DIR),) $(if $(REFERENCE_MAE),--reference-mae $(REFERENCE_MAE),)
+
+api:
+	uv run uvicorn src.serving.api:app --reload
