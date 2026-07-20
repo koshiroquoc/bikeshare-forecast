@@ -1,4 +1,4 @@
-.PHONY: ingest test lint features backtest mlflow-day1 mlflow-day4 mlflow-day5-tune mlflow-day5-final train-production forecast replay api
+.PHONY: ingest test lint features backtest mlflow-day1 mlflow-day4 mlflow-day5-tune mlflow-day5-final train-production forecast replay api monitor promote docker-build docker-up docker-down
 
 export PREFECT_SERVER_EPHEMERAL_ENABLED=True
 
@@ -41,3 +41,18 @@ replay:
 
 api:
 	uv run uvicorn src.serving.api:app --reload
+
+monitor:
+	uv run python -m scripts.run_monitoring --model-dir $(MODEL_DIR) $(if $(PREDICTIONS_DIR),--predictions-dir $(PREDICTIONS_DIR),) $(if $(REPORT_DIR),--report-dir $(REPORT_DIR),)
+
+promote:
+	uv run python -m src.training.promote $(if $(CURRENT_DIR),--current-dir $(CURRENT_DIR),) $(if $(ARCHIVE_DIR),--archive-dir $(ARCHIVE_DIR),) $(if $(MIN_IMPROVEMENT),--min-improvement $(MIN_IMPROVEMENT),)
+
+docker-build:
+	docker build --tag bikeshare-forecast:local .
+
+docker-up:
+	docker compose up --detach api
+
+docker-down:
+	docker compose down

@@ -24,7 +24,10 @@ Final LightGBM (Poisson) model vs. baselines, evaluated on 4 rolling-origin mont
 | Experiment tracking | MLflow 3.x (SQLite backend) |
 | Testing | pytest (full-grid, leakage guard, train/serve consistency) |
 | Package management | uv |
-| Planned (Weeks 4–5) | FastAPI serving (batch precompute), Prefect 3 orchestration, Evidently drift detection, Docker, GitHub Actions |
+| Serving | FastAPI over leak-safe, precomputed daily forecasts |
+| Orchestration | Prefect 3 |
+| Monitoring | Evidently 0.7 + machine-readable performance/drift gates |
+| Delivery | Docker Compose + GitHub Actions |
 
 ## Problem setup
 
@@ -178,10 +181,54 @@ Station-month panel for downstream station analysis.
 | `casual_trips` | Casual trips in that station-month |
 | `total_trips` | Total trips in that station-month |
 
+## Run the production loop
+
+Historical replay must use an artifact trained strictly before the replay date.
+For the checked Week 4 replay store, that artifact is
+`models/replay_2026-06-14`.
+
+```bash
+# One replay-safe forecast day
+make forecast AS_OF=2026-06-15 MODEL_DIR=models/replay_2026-06-14
+
+# Serve the precomputed prediction store
+make api
+
+# Monitor the exact artifact version that produced the store
+make monitor MODEL_DIR=models/replay_2026-06-14
+
+# Evaluate champion/challenger promotion on a truly unseen full month
+make promote
+```
+
+Monitoring writes `reports/monitoring_summary.json` and
+`reports/drift_report.html`. Exit code `0` means both gates passed, `1` means
+performance passed but drift needs review, and `2` means the performance gate
+failed. Promotion returns `waiting_for_unseen_month` rather than evaluating on
+data included in the champion's training cutoff.
+
+### Docker
+
+```bash
+make docker-build
+make docker-up
+curl http://127.0.0.1:8000/health
+
+docker compose run --rm monitoring \
+  --model-dir models/replay_2026-06-14
+
+docker compose run --rm promotion
+make docker-down
+```
+
+The API container mounts `data/` and `models/` read-only. Forecast,
+monitoring, and promotion are opt-in one-shot Compose jobs. The CI workflow
+runs lint, all tests, Compose validation, and a production image build.
+
 ## Roadmap
 
 - [x] Week 1 — Data cleaning, station mapping, scope selection, EDA
 - [x] Week 2 — Station-hour grid, leak-safe features, rolling-origin backtest, baselines
 - [x] Week 3 — LightGBM model, feature iteration, tuning, error analysis
-- [ ] Week 4 — Model serving: FastAPI with batch precompute (input space is enumerable: N stations × 24 hours), self-describing model artifacts (feature list, categorical mappings, git hash, val MAE)
-- [ ] Week 5 — Orchestration (Prefect 3), MLflow promotion gate reusing the backtest harness, drift detection (Evidently), Docker + GitHub Actions
+- [x] Week 4 — Self-describing artifacts, leak-safe batch forecast, Prefect replay, and FastAPI serving
+- [x] Week 5 — Version-matched monitoring, leakage-safe promotion, Docker Compose, and GitHub Actions

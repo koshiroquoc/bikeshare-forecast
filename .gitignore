@@ -12,3 +12,4 @@ mlflow.db
 mlartifacts/
 mlruns/
 models/
+reports/

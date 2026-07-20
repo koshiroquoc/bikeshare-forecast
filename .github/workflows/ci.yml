@@ -1,0 +1,45 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v8
+        with:
+          version: "0.11.26"
+          python-version: "3.11"
+          enable-cache: true
+
+      - name: Sync locked environment
+        run: uv sync --locked --dev
+
+      - name: Lint
+        run: uv run --frozen ruff check .
+
+      - name: Tests
+        run: uv run --frozen pytest -q
+
+  container:
+    runs-on: ubuntu-latest
+    needs: test
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Validate Compose
+        run: docker compose config --quiet
+
+      - name: Build production image
+        run: docker build --tag bikeshare-forecast:ci .

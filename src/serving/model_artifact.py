@@ -62,10 +62,16 @@ def save_artifact(
 def load_artifact(model_dir: str | Path) -> tuple:
     model_dir = Path(model_dir)
     model = joblib.load(model_dir / "model.joblib")
-    metadata = json.loads(
+    metadata = load_metadata(model_dir)
+    return model, metadata
+
+
+def load_metadata(model_dir: str | Path) -> dict:
+    """Load artifact metadata without loading the LightGBM model."""
+    model_dir = Path(model_dir)
+    return json.loads(
         (model_dir / "metadata.json").read_text(encoding="utf-8")
     )
-    return model, metadata
 
 
 def predict_frame(model, metadata: dict, df: pl.DataFrame) -> pl.Series:
